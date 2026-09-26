@@ -123,7 +123,7 @@ Documentation is unusually complete for a 0.1 release: 21 markdown pages, editor
 
 - **Provider credentials reach the shell.** `BashTool` inherits the full parent environment, and `BashConfig::scrub_env` defaults to empty; `kage init` even writes `scrub_env = []` with the useful list commented out (`crates/kage-cli/src/init.rs`). A model or an injection can run `env` and read `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` when those come from the environment. `scrub_env` also cannot be a boundary on Linux: the child runs as the same UID and can read `/proc/<ppid>/environ`.
 
-- **No read-before-write or external-change detection.** `edit` and `write` read and replace the file with no record that the model ever read it and no mtime or content check (`crates/kage-tools/src/builtin/edit.rs`). kimi-code explicitly rejects writes and edits when the file was not read first or changed on disk; opencode keeps snapshots. kage will silently clobber a concurrent edit.
+- **No read-before-write or external-change detection.** `write` gates only on an explicit `overwrite: true` flag. `edit` re-reads the file from disk and applies splices with no record that the model ever read it, no mtime check, and no content hash (`crates/kage-tools/src/builtin/edit.rs`). Its exact-match semantics give partial cover: a changed match region fails loudly. A change anywhere else is invisible, and `read` returns no hash or mtime, so nothing could detect it later (`crates/kage-tools/src/builtin/read.rs` returns `structured: None`). Neither tool is `ExecMode::Sequential`, so two mutations in one parallel batch can interleave. kimi-code rejects writes and edits when the file was not read first or changed on disk; opencode keeps snapshots. kage clobbers.
 
 - **Bus factor.** One author, no issues, no releases. If this is meant to be used by anyone other than its author, that is the risk to solve first.
 
@@ -149,7 +149,7 @@ Ordered by how much they matter.
 ### MEDIUM
 
 4. **Read-before-write tracking for `edit` and `write`.**
-   Keep a per-session map of path to `(mtime, size, hash)` populated by `read`; reject an edit if the file changed since, and reject a write over an unread existing file.
+   Keep a per-session map of path to `(mtime, size, hash)` populated by `read`; reject an edit if the file changed since, and reject a write over an unread existing file. Exact-match editing catches a changed match region only; it does not protect a `write`, a match region that happens to still be unique, or a change elsewhere in the file. Do not rely on `parallel_tools` being off by default to serialise mutations: either mark both tools `ExecMode::Sequential` or add a per-path mutation queue as pi does (`file-mutation-queue.ts`).
    *Files:* `crates/kage-tools/src/builtin/{read,write,edit}.rs`.
 
 5. **Widen the SSRF denylist.**
